@@ -19,9 +19,7 @@ def apriori(transactions, min_support, sort_by="support"):
     n = len(transactions)
     min_count = math.ceil(n * min_support)
 
-    counts = Counter(
-        item for basket in transactions for item in basket
-    )
+    counts = Counter(item for basket in transactions for item in basket)
 
     current = {
         frozenset([item]): count
@@ -38,7 +36,6 @@ def apriori(transactions, min_support, sort_by="support"):
 
         for a, b in itertools.combinations(previous, 2):
             candidate = a | b
-
             if len(candidate) == k and all(
                 frozenset(s) in previous
                 for s in itertools.combinations(candidate, k - 1)
@@ -81,220 +78,137 @@ def apriori(transactions, min_support, sort_by="support"):
     ]
 
 
-def experiments(transactions):
-    supports = [0.01, 0.03, 0.05, 0.10, 0.15]
+def generate_rules(frequent_itemsets, min_confidence, sort_by="confidence"):
+    rules = []
+    support_dict = {
+        frozenset(items): support
+        for items, support in frequent_itemsets
+    }
+
+    for itemset, support in frequent_itemsets:
+        if len(itemset) < 2:
+            continue
+
+        itemset_frozen = frozenset(itemset)
+
+        for i in range(1, len(itemset)):
+            for antecedent in itertools.combinations(itemset, i):
+                antecedent_frozen = frozenset(antecedent)
+                consequent = itemset_frozen - antecedent_frozen
+
+                antecedent_support = support_dict.get(antecedent_frozen, 0)
+
+                if antecedent_support > 0:
+                    confidence = support / antecedent_support
+                    if confidence >= min_confidence:
+                        rules.append({
+                            'antecedent': tuple(sorted(antecedent)),
+                            'consequent': tuple(sorted(consequent)),
+                            'support': support,
+                            'confidence': confidence
+                        })
+
+    if sort_by == "confidence":
+        rules.sort(key=lambda x: (-x['confidence'], -x['support']))
+    elif sort_by == "support":
+        rules.sort(key=lambda x: (-x['support'], -x['confidence']))
+    else:
+        rules.sort(key=lambda x: (x['antecedent'], x['consequent']))
+
+    return rules
+
+
+def run_experiments(transactions, min_support=0.01):
+    # Адаптированный диапазон уверенности под реалии продуктового набора данных
+    confidences = [0.30, 0.40, 0.50, 0.60, 0.70, 0.80]
     results = []
 
-    for s in supports:
+    frequent_itemsets = apriori(transactions, min_support)
+
+    for conf in confidences:
         start = time.perf_counter()
-        frequent = apriori(transactions, s)
+        rules = generate_rules(frequent_itemsets, conf)
         elapsed = time.perf_counter() - start
 
-        lengths = Counter(len(items) for items, _ in frequent)
-
         results.append({
-            "support": s,
+            "confidence": conf,
             "time": elapsed,
-            "total": len(frequent),
-            "1": lengths.get(1, 0),
-            "2": lengths.get(2, 0),
-            "3": lengths.get(3, 0),
-            "4+": sum(
-                v for k, v in lengths.items()
-                if k >= 4
-            )
+            "total_rules": len(rules)
         })
 
     return results
 
 
-def save_results(results):
-    with open(
-        "experiment_results.csv",
-        "w",
-        encoding="utf-8-sig",
-        newline=""
-    ) as f:
+def save_rules_to_csv(rules, filename="rules.csv"):
+    with open(filename, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-
-        writer.writerow([
-            "Порог",
-            "Время, с",
-            "Всего наборов",
-            "Длина 1",
-            "Длина 2",
-            "Длина 3",
-            "Длина 4+"
-        ])
-
-        for r in results:
+        writer.writerow(["Антецедент", "Консеквент", "Поддержка", "Уверенность"])
+        for rule in rules:
             writer.writerow([
-                r["support"],
-                r["time"],
-                r["total"],
-                r["1"],
-                r["2"],
-                r["3"],
-                r["4+"]
+                ", ".join(rule['antecedent']),
+                ", ".join(rule['consequent']),
+                f"{rule['support']:.4f}",
+                f"{rule['confidence']:.4f}"
             ])
 
 
 def make_charts(results):
-    x = [f"{r['support'] * 100:.0f}%" for r in results]
+    x = [f"{r['confidence'] * 100:.0f}%" for r in results]
 
-    # Диаграмма 1: время выполнения
     plt.figure(figsize=(8, 5))
-
-    plt.bar(
-        x,
-        [r["time"] for r in results]
-    )
-
-    plt.xlabel("Порог поддержки")
+    plt.bar(x, [r["time"] for r in results], color='skyblue', edgecolor='black')
+    plt.xlabel("Порог уверенности")
     plt.ylabel("Время выполнения, с")
-    plt.title(
-        "Время выполнения алгоритма Apriori\n"
-        "при разных порогах поддержки"
-    )
-
-    plt.grid(axis="y")
+    plt.title("Время выполнения поиска ассоциативных правил")
+    plt.grid(axis="y", alpha=0.3)
     plt.tight_layout()
-    plt.savefig("time_vs_support.png", dpi=300)
+    plt.savefig("rules_time_vs_confidence.png", dpi=300)
     plt.show()
 
-    # Диаграмма 2: количество наборов разной длины
-    plt.figure(figsize=(9, 5))
-
-    width = 0.2
-    positions = list(range(len(x)))
-
-    plt.bar(
-        [p - 1.5 * width for p in positions],
-        [r["1"] for r in results],
-        width,
-        label="Длина 1"
-    )
-
-    plt.bar(
-        [p - 0.5 * width for p in positions],
-        [r["2"] for r in results],
-        width,
-        label="Длина 2"
-    )
-
-    plt.bar(
-        [p + 0.5 * width for p in positions],
-        [r["3"] for r in results],
-        width,
-        label="Длина 3"
-    )
-
-    plt.bar(
-        [p + 1.5 * width for p in positions],
-        [r["4+"] for r in results],
-        width,
-        label="Длина 4 и более"
-    )
-
-    plt.xlabel("Порог поддержки")
-    plt.ylabel("Количество частых наборов")
-    plt.title(
-        "Количество частых наборов различной длины\n"
-        "при разных порогах поддержки"
-    )
-
-    plt.xticks(positions, x)
-    plt.grid(axis="y")
-    plt.legend()
+    plt.figure(figsize=(8, 5))
+    plt.bar(x, [r["total_rules"] for r in results], color='lightgreen', edgecolor='black')
+    plt.xlabel("Порог уверенности")
+    plt.ylabel("Количество правил")
+    plt.title("Количество найденных ассоциативных правил")
+    plt.grid(axis="y", alpha=0.3)
     plt.tight_layout()
-    plt.savefig("itemsets_by_length.png", dpi=300)
+    plt.savefig("rules_count_vs_confidence.png", dpi=300)
     plt.show()
+
+
+def print_short_rules(rules, max_total_length=7):
+    short_rules = [
+        rule for rule in rules
+        if len(rule['antecedent']) + len(rule['consequent']) <= max_total_length
+    ]
+
+    print(f"\nПравила с суммарной длиной <= {max_total_length} ({len(short_rules)} шт.):")
+    for i, rule in enumerate(short_rules[:20], 1):
+        ant = ", ".join(rule['antecedent'])
+        con = ", ".join(rule['consequent'])
+        print(f"{i:3}. {{{ant}}} -> {{{con}}} | Supp: {rule['support']:.4f}, Conf: {rule['confidence']:.4f}")
 
 
 def main():
     transactions = read_data("baskets.csv")
+    
+    min_support = 0.01  # Снижено до 1% для поиска узких, но сильных ассоциаций
+    results = run_experiments(transactions, min_support)
 
-    print("=" * 65)
-    print("АНАЛИЗ РЫНОЧНОЙ КОРЗИНЫ")
-    print("=" * 65)
+    with open("rules_experiment_results.csv", "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Порог уверенности", "Время, с", "Количество правил"])
+        for r in results:
+            writer.writerow([f"{r['confidence']*100:.0f}%", f"{r['time']:.6f}", r['total_rules']])
 
-    print(f"Количество транзакций: {len(transactions)}")
-
-    items = set()
-    for basket in transactions:
-        items.update(basket)
-
-    print(f"Количество различных товаров: {len(items)}")
-
-    # Основной запуск Apriori при поддержке 5%
-    frequent = apriori(
-        transactions,
-        0.05,
-        sort_by="support"
-    )
-
-    print()
-    print("Частые наборы при поддержке 5%:")
-    print("-" * 65)
-
-    for itemset, support in frequent:
-        print(
-            f"{{{', '.join(itemset)}}} "
-            f"-> support = {support:.4f}"
-        )
-
-    # Проверка лексикографической сортировки
-    lexicographic = apriori(
-        transactions,
-        0.05,
-        sort_by="lexicographic"
-    )
-
-    print()
-    print(
-        "Лексикографическая сортировка "
-        f"(первые 10 из {len(lexicographic)}):"
-    )
-
-    for itemset, support in lexicographic[:10]:
-        print(
-            f"{{{', '.join(itemset)}}} "
-            f"-> support = {support:.4f}"
-        )
-
-    # Эксперименты
-    results = experiments(transactions)
-
-    print()
-    print("=" * 65)
-    print("РЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТОВ")
-    print("=" * 65)
-
-    print(
-        f"{'Порог':<10}"
-        f"{'Время, с':<15}"
-        f"{'Всего':<10}"
-        f"{'Длина 1':<12}"
-        f"{'Длина 2':<12}"
-        f"{'Длина 3':<12}"
-        f"{'Длина 4+':<10}"
-    )
-
-    for r in results:
-        print(
-            f"{r['support'] * 100:<10.0f}"
-            f"{r['time']:<15.6f}"
-            f"{r['total']:<10}"
-            f"{r['1']:<12}"
-            f"{r['2']:<12}"
-            f"{r['3']:<12}"
-            f"{r['4+']:<10}"
-        )
-
-    save_results(results)
     make_charts(results)
 
-    print()
+    frequent_itemsets = apriori(transactions, min_support)
+    rules = generate_rules(frequent_itemsets, 0.30) # Берем минимальный порог для демонстрации
+
+    save_rules_to_csv(rules, "all_rules_30.csv")
+    print_short_rules(rules)
+
 
 if __name__ == "__main__":
     main()
